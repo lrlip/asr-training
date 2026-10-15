@@ -1,6 +1,6 @@
 @echo off
-rem Double-click this file (or the "Reset ASR training" shortcut on the desktop) to remove the
-rem training sessions, clone them again and set them up. It runs reset.ps1 next to it with the
+rem Double-click this file to choose which training sessions to remove, clone again and set up;
+rem reset1.cmd, reset2.cmd and resetall.cmd skip the choice. It runs reset.ps1 next to it with the
 rem execution policy bypassed for this run only and keeps the window open so the messages stay
 rem readable.
 setlocal

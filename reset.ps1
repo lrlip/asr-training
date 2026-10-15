@@ -27,7 +27,7 @@
 [CmdletBinding()]
 param(
     [string]$TrainingFolder = '',
-    # Session numbers or names, such as 1, asr-session-2 or "1,2". Empty asks, or with -Force takes all.
+    # Session numbers or names, such as 1, asr-session-2, "1,2" or all. Empty asks, or with -Force takes all.
     [string[]]$Session = @(),
     [switch]$Force
 )
@@ -41,7 +41,14 @@ $script:Sessions = @(
     @{ Name = 'asr-session-2'; Repository = 'https://github.com/AlexDM0/asr-session-2.git' }
 )
 $script:ProcessesToStop = @('node', 'bun')
-$script:ShortcutName = 'Reset ASR training'
+# The reset buttons on the desktop: shortcut name and the file next to this script it starts.
+$script:Shortcuts = @(
+    @{ Name = 'Reset ASR session 1'; Target = 'reset1.cmd'; Description = 'Removes asr-session-1, clones it again and sets it up' },
+    @{ Name = 'Reset ASR session 2'; Target = 'reset2.cmd'; Description = 'Removes asr-session-2, clones it again and sets it up' },
+    @{ Name = 'Reset ASR all sessions'; Target = 'resetall.cmd'; Description = 'Removes every training session, clones them again and sets them up' }
+)
+# The single shortcut of an earlier version, which the three above replace.
+$script:OldShortcutName = 'Reset ASR training'
 $script:FallbackTrainingFolder = 'C:\training'
 # AppLocker and WDAC run scripts from a user folder in ConstrainedLanguage, where .NET calls fail.
 $script:IsFullLanguage = ($ExecutionContext.SessionState.LanguageMode -eq 'FullLanguage')
@@ -115,22 +122,26 @@ function Resolve-TrainingFolder {
     return $null
 }
 
-# A double-click on the desktop is the reset button. Only creates the shortcut when it is missing.
-function Install-DesktopShortcut {
+# A double-click on a desktop shortcut is a reset button. Only creates the shortcuts that are
+# missing, and removes the single shortcut of an earlier version.
+function Install-DesktopShortcuts {
     if (-not $script:IsFullLanguage) { return }
     try {
         $desktopFolder = Get-DesktopFolder
-        $shortcutPath = Join-Path $desktopFolder "$script:ShortcutName.lnk"
-        if (Test-Path -LiteralPath $shortcutPath) { return }
+        Remove-Item -LiteralPath (Join-Path $desktopFolder "$script:OldShortcutName.lnk") -Force -ErrorAction SilentlyContinue
         $shell = New-Object -ComObject WScript.Shell
-        $shortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = Join-Path $PSScriptRoot 'reset.cmd'
-        $shortcut.WorkingDirectory = $PSScriptRoot
-        $shortcut.Description = 'Removes the training sessions, clones them again and sets them up'
-        $shortcut.Save()
-        Write-Ok "Added the shortcut `"$script:ShortcutName`" to the desktop."
+        foreach ($shortcutDefinition in $script:Shortcuts) {
+            $shortcutPath = Join-Path $desktopFolder "$($shortcutDefinition.Name).lnk"
+            if (Test-Path -LiteralPath $shortcutPath) { continue }
+            $shortcut = $shell.CreateShortcut($shortcutPath)
+            $shortcut.TargetPath = Join-Path $PSScriptRoot $shortcutDefinition.Target
+            $shortcut.WorkingDirectory = $PSScriptRoot
+            $shortcut.Description = $shortcutDefinition.Description
+            $shortcut.Save()
+            Write-Ok "Added the shortcut `"$($shortcutDefinition.Name)`" to the desktop."
+        }
     } catch {
-        Write-Warn "Could not add a desktop shortcut: $($_.Exception.Message)"
+        Write-Warn "Could not add the desktop shortcuts: $($_.Exception.Message)"
     }
 }
 
@@ -146,10 +157,11 @@ function Stop-TrainingProcesses {
     Write-Ok 'Stopped the running Node.js and Bun processes.'
 }
 
-# Turns -Session values like 1, asr-session-2 or "1,2" into sessions. Returns $null for an unknown one.
+# Turns -Session values like 1, asr-session-2, "1,2" or all into sessions. Returns $null for an unknown one.
 function Get-SessionsFromNames($sessionNames) {
     $selectedSessions = @()
     foreach ($sessionName in @($sessionNames | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ })) {
+        if ($sessionName -ieq 'all') { return ,@($script:Sessions) }
         $matchingSession = $script:Sessions | Where-Object { $_.Name -ieq $sessionName -or $_.Name -ieq "asr-session-$sessionName" }
         if (-not $matchingSession) {
             Write-ErrorMessage "There is no session $sessionName. Choose from: $(($script:Sessions | ForEach-Object { $_.Name }) -join ', ')."
@@ -234,6 +246,7 @@ function Invoke-Reset {
         $script:ResetExitCode = 1; return
     }
     $script:TrainingFolder = $resolvedFolder
+    Install-DesktopShortcuts
 
     # --- 1. Choice and confirmation ---------------------------------------------
     if ($Session.Count -gt 0) {
@@ -268,7 +281,6 @@ function Invoke-Reset {
     }
     Write-Ok "$(& git --version) works."
     Initialize-SystemProxy
-    Install-DesktopShortcut
     Stop-TrainingProcesses
 
     # --- 3. Sessions -----------------------------------------------------------
