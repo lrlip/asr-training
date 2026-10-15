@@ -1,11 +1,13 @@
 <#
 .SYNOPSIS
-  reset.ps1 - give this laptop a fresh copy of every session of the AI Orchestrator training and
-  set each one up, on Windows.
+  reset.ps1 - give this laptop a fresh copy of one or every session of the AI Orchestrator training
+  and set it up, on Windows.
 
 .DESCRIPTION
-  1. Asks for confirmation, unless -Force is given
-  2. Stops running Node.js and Bun processes, so they release the session folders
+  1. Asks which sessions to reset, which is also the confirmation; -Session skips the question and
+     -Force the confirmation
+  2. Stops every running Node.js and Bun process, also when only one session is reset, so they
+     release the session folders
   3. Per session: removes the existing folder, clones the repository again from GitHub and runs its
      setup.ps1
 
@@ -18,11 +20,15 @@
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File .\reset.ps1
 .EXAMPLE
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\reset.ps1 -Session 2
+.EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File .\reset.ps1 -TrainingFolder D:\training -Force
 #>
 [CmdletBinding()]
 param(
     [string]$TrainingFolder = '',
+    # Session numbers or names, such as 1, asr-session-2 or "1,2". Empty asks, or with -Force takes all.
+    [string[]]$Session = @(),
     [switch]$Force
 )
 
@@ -140,6 +146,38 @@ function Stop-TrainingProcesses {
     Write-Ok 'Stopped the running Node.js and Bun processes.'
 }
 
+# Turns -Session values like 1, asr-session-2 or "1,2" into sessions. Returns $null for an unknown one.
+function Get-SessionsFromNames($sessionNames) {
+    $selectedSessions = @()
+    foreach ($sessionName in @($sessionNames | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { $_ })) {
+        $matchingSession = $script:Sessions | Where-Object { $_.Name -ieq $sessionName -or $_.Name -ieq "asr-session-$sessionName" }
+        if (-not $matchingSession) {
+            Write-ErrorMessage "There is no session $sessionName. Choose from: $(($script:Sessions | ForEach-Object { $_.Name }) -join ', ')."
+            return $null
+        }
+        if ($selectedSessions -notcontains $matchingSession) { $selectedSessions += $matchingSession }
+    }
+    return ,$selectedSessions
+}
+
+# Asks which sessions to reset; the answer is also the confirmation. Returns no sessions on Enter.
+function Read-SessionChoice {
+    Write-Host ''
+    Write-Bold 'Which session do you want to reset? This deletes all work in it.'
+    for ($sessionIndex = 0; $sessionIndex -lt $script:Sessions.Count; $sessionIndex++) {
+        $sessionFolder = Join-Path $script:TrainingFolder $script:Sessions[$sessionIndex].Name
+        Write-Host "  $($sessionIndex + 1)  $sessionFolder"
+    }
+    Write-Host '  A  all of them'
+    while ($true) {
+        $answer = (Read-Host 'Type 1, 2 or A and press Enter (only Enter: stop)').Trim()
+        if (-not $answer) { return ,@() }
+        if ($answer -ieq 'A') { return ,@($script:Sessions) }
+        $chosenSessions = Get-SessionsFromNames @($answer)
+        if ($chosenSessions) { return ,$chosenSessions }
+    }
+}
+
 # Remove-Item in Windows PowerShell 5.1 fails on paths past 260 characters, which node_modules
 # reaches; rmdir with the \\?\ prefix does not. Returns whether the folder is gone.
 function Remove-SessionFolder($sessionFolder) {
@@ -190,17 +228,28 @@ function Reset-Session($session) {
 }
 
 function Invoke-Reset {
-    $sessionNames = ($script:Sessions | ForEach-Object { $_.Name }) -join ' and '
     $resolvedFolder = Resolve-TrainingFolder
     if (-not $resolvedFolder) {
         Write-Info 'Pick a folder you can write to with -TrainingFolder, for example D:\training.'
         $script:ResetExitCode = 1; return
     }
     $script:TrainingFolder = $resolvedFolder
-    Write-Bold "Resetting $sessionNames in $script:TrainingFolder"
 
-    # --- 1. Confirmation -----------------------------------------------------
-    if (-not $Force) {
+    # --- 1. Choice and confirmation ---------------------------------------------
+    if ($Session.Count -gt 0) {
+        $selectedSessions = Get-SessionsFromNames $Session
+        if (-not $selectedSessions) { $script:ResetExitCode = 1; return }
+    } elseif ($Force) {
+        $selectedSessions = @($script:Sessions)
+    } else {
+        $selectedSessions = Read-SessionChoice
+    }
+    if ($selectedSessions.Count -eq 0) {
+        Write-Info 'Nothing was changed.'
+        return
+    }
+    $sessionNames = ($selectedSessions | ForEach-Object { $_.Name }) -join ' and '
+    if ($Session.Count -gt 0 -and -not $Force) {
         Write-Host ''
         Write-Warn "This deletes $sessionNames in $script:TrainingFolder, with all work in them."
         $answer = Read-Host 'Type Y and press Enter to continue'
@@ -209,6 +258,7 @@ function Invoke-Reset {
             return
         }
     }
+    Write-Bold "Resetting $sessionNames in $script:TrainingFolder"
 
     # --- 2. Checks and processes -----------------------------------------------
     Write-Step 'Checks'
@@ -224,8 +274,8 @@ function Invoke-Reset {
     # --- 3. Sessions -----------------------------------------------------------
     # Every session gets its turn, so one failing session does not block the other.
     $failedSessions = @()
-    foreach ($session in $script:Sessions) {
-        if (-not (Reset-Session $session)) { $failedSessions += $session.Name }
+    foreach ($selectedSession in $selectedSessions) {
+        if (-not (Reset-Session $selectedSession)) { $failedSessions += $selectedSession.Name }
     }
 
     Write-Host ''
@@ -233,7 +283,7 @@ function Invoke-Reset {
         Write-ErrorMessage "Not ready: $($failedSessions -join ', '). Read the messages above."
         $script:ResetExitCode = 1
     } else {
-        Write-Ok "Every session is ready in $script:TrainingFolder."
+        Write-Ok "Ready in $($script:TrainingFolder): $sessionNames."
     }
 }
 

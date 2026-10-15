@@ -1,9 +1,10 @@
 # AI Orchestrator training: reset button
 
-One button that gives a Windows laptop a fresh copy of every training session:
+One button that gives a Windows laptop a fresh copy of one or every training session:
 
-1. Asks for confirmation (type `Y`)
-2. Stops running Node.js and Bun processes, so they release the session folders
+1. Asks which session to reset: `1`, `2` or `A` for all of them. That answer is also the confirmation
+2. Stops every running Node.js and Bun process, also when only one session is reset, so they
+   release the session folders
 3. Per session: removes the existing folder, clones it again from GitHub and runs its `setup.ps1`
 
 | Session | Repository |
@@ -27,17 +28,20 @@ git clone https://github.com/lrlip/asr-training-reset.git "$([Environment]::GetF
 
 ## Use
 
-Double-click `reset.cmd` in the `asr-training-reset` folder on the desktop. The first run also adds a **Reset ASR training** shortcut to the desktop;
-from then on that shortcut is the button. Between two groups: press it, type `Y`, wait until it
-says every session is ready.
+Double-click `reset.cmd` in the `asr-training-reset` folder on the desktop. The first run also adds
+a **Reset ASR training** shortcut to the desktop; from then on that shortcut is the button. Between
+two groups: press it, type the session to reset (`1`, `2` or `A`), press Enter and wait until it
+says the sessions are ready. Only Enter stops without changing anything.
 
-Pressing it deletes all work in the session folders. It does not sign anyone out of GitHub, VS Code
+Resetting deletes all work in the chosen session folders. It does not sign anyone out of GitHub, VS Code
 or Copilot, and does not change the git name and email.
 
 Options, from a PowerShell window in this folder:
 
 ```powershell
-.\reset.cmd -Force                          # no confirmation
+.\reset.cmd -Session 2                      # only asr-session-2, after typing Y
+.\reset.cmd -Session 1 -Force               # only asr-session-1, no confirmation
+.\reset.cmd -Force                          # every session, no confirmation
 .\reset.cmd -TrainingFolder D:\training     # another folder than the desktop (an absolute path)
 ```
 
