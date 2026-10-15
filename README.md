@@ -11,12 +11,23 @@ One button that gives a Windows laptop a fresh copy of every training session:
 | `asr-session-1` | https://github.com/AlexDM0/asr-session-1 |
 | `asr-session-2` | https://github.com/AlexDM0/asr-session-2 |
 
-The sessions go in `C:\training`. Not inside this folder: the session setups refuse to run inside
-another git repository.
+The sessions go on the desktop, next to this launcher. When the desktop cannot be written to, they
+go in `C:\training`. Never inside this folder: the session setups refuse to run inside another git
+repository.
+
+## Install, once per laptop
+
+Clone this repository to the desktop, from a PowerShell window:
+
+```powershell
+git clone https://github.com/lrlip/asr-training-reset.git "$([Environment]::GetFolderPath('Desktop'))\asr-training-reset"
+```
+
+`GetFolderPath` finds the desktop also when OneDrive has moved it.
 
 ## Use
 
-Double-click `reset.cmd`. The first run also adds a **Reset ASR training** shortcut to the desktop;
+Double-click `reset.cmd` in the `asr-training-reset` folder on the desktop. The first run also adds a **Reset ASR training** shortcut to the desktop;
 from then on that shortcut is the button. Between two groups: press it, type `Y`, wait until it
 says every session is ready.
 
@@ -27,7 +38,7 @@ Options, from a PowerShell window in this folder:
 
 ```powershell
 .\reset.cmd -Force                          # no confirmation
-.\reset.cmd -TrainingFolder D:\training     # another folder (an absolute path)
+.\reset.cmd -TrainingFolder D:\training     # another folder than the desktop (an absolute path)
 ```
 
 ## Requirements

@@ -9,8 +9,9 @@
   3. Per session: removes the existing folder, clones the repository again from GitHub and runs its
      setup.ps1
 
-  The sessions go in $TrainingFolder (C:\training by default), never inside this launcher: the
-  session setups refuse to run inside another git repository. Works in Windows PowerShell 5.1 and
+  The sessions go on the desktop, next to this launcher, or in C:\training when the desktop cannot
+  be written to. Never inside this launcher: the session setups refuse to run inside another git
+  repository. -TrainingFolder picks another folder. Works in Windows PowerShell 5.1 and
   PowerShell 7. Deliberately pure ASCII, so 5.1 parses it without a BOM. reset.cmd next to this
   file starts it with the execution policy bypassed.
 
@@ -21,7 +22,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$TrainingFolder = 'C:\training',
+    [string]$TrainingFolder = '',
     [switch]$Force
 )
 
@@ -35,6 +36,7 @@ $script:Sessions = @(
 )
 $script:ProcessesToStop = @('node', 'bun')
 $script:ShortcutName = 'Reset ASR training'
+$script:FallbackTrainingFolder = 'C:\training'
 # AppLocker and WDAC run scripts from a user folder in ConstrainedLanguage, where .NET calls fail.
 $script:IsFullLanguage = ($ExecutionContext.SessionState.LanguageMode -eq 'FullLanguage')
 $script:ResetExitCode = 0
@@ -70,11 +72,48 @@ function Initialize-SystemProxy {
     } catch { }
 }
 
+# The desktop Explorer shows, which OneDrive or a company policy may have moved away from
+# %USERPROFILE%\Desktop. GetFolderPath is a .NET call, so locked-down PowerShell falls back.
+function Get-DesktopFolder {
+    $desktopFolder = $null
+    if ($script:IsFullLanguage) {
+        try { $desktopFolder = [Environment]::GetFolderPath('Desktop') } catch { }
+    }
+    if (-not $desktopFolder) { $desktopFolder = Join-Path $env:USERPROFILE 'Desktop' }
+    return $desktopFolder
+}
+
+# Whether a file can be created in $folder, which also creates $folder when it is missing.
+function Test-FolderIsWritable($folder) {
+    if (-not $folder) { return $false }
+    New-Item -ItemType Directory -Path $folder -Force -ErrorAction SilentlyContinue | Out-Null
+    $probeFile = Join-Path $folder 'reset-write-test.tmp'
+    New-Item -ItemType File -Path $probeFile -Force -ErrorAction SilentlyContinue | Out-Null
+    if (-not (Test-Path -LiteralPath $probeFile)) { return $false }
+    Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
+# -TrainingFolder when given, else the desktop, else C:\training. Returns $null when none works.
+function Resolve-TrainingFolder {
+    if ($script:TrainingFolder) {
+        if (Test-FolderIsWritable $script:TrainingFolder) { return $script:TrainingFolder }
+        Write-ErrorMessage "Cannot write to $script:TrainingFolder."
+        return $null
+    }
+    $desktopFolder = Get-DesktopFolder
+    if (Test-FolderIsWritable $desktopFolder) { return $desktopFolder }
+    Write-Warn "Cannot write to the desktop ($desktopFolder); using $script:FallbackTrainingFolder instead."
+    if (Test-FolderIsWritable $script:FallbackTrainingFolder) { return $script:FallbackTrainingFolder }
+    Write-ErrorMessage "Cannot write to $script:FallbackTrainingFolder either."
+    return $null
+}
+
 # A double-click on the desktop is the reset button. Only creates the shortcut when it is missing.
 function Install-DesktopShortcut {
     if (-not $script:IsFullLanguage) { return }
     try {
-        $desktopFolder = [Environment]::GetFolderPath('Desktop')
+        $desktopFolder = Get-DesktopFolder
         $shortcutPath = Join-Path $desktopFolder "$script:ShortcutName.lnk"
         if (Test-Path -LiteralPath $shortcutPath) { return }
         $shell = New-Object -ComObject WScript.Shell
@@ -113,7 +152,7 @@ function Remove-SessionFolder($sessionFolder) {
 
 # Returns whether the session was cloned and set up.
 function Reset-Session($session) {
-    $sessionFolder = Join-Path $TrainingFolder $session.Name
+    $sessionFolder = Join-Path $script:TrainingFolder $session.Name
     Write-Step $session.Name
 
     if (Test-Path -LiteralPath $sessionFolder) {
@@ -152,12 +191,18 @@ function Reset-Session($session) {
 
 function Invoke-Reset {
     $sessionNames = ($script:Sessions | ForEach-Object { $_.Name }) -join ' and '
-    Write-Bold "Resetting $sessionNames in $TrainingFolder"
+    $resolvedFolder = Resolve-TrainingFolder
+    if (-not $resolvedFolder) {
+        Write-Info 'Pick a folder you can write to with -TrainingFolder, for example D:\training.'
+        $script:ResetExitCode = 1; return
+    }
+    $script:TrainingFolder = $resolvedFolder
+    Write-Bold "Resetting $sessionNames in $script:TrainingFolder"
 
     # --- 1. Confirmation -----------------------------------------------------
     if (-not $Force) {
         Write-Host ''
-        Write-Warn "This deletes $sessionNames in $TrainingFolder, with all work in them."
+        Write-Warn "This deletes $sessionNames in $script:TrainingFolder, with all work in them."
         $answer = Read-Host 'Type Y and press Enter to continue'
         if ($answer -notmatch '^\s*[yY]') {
             Write-Info 'Nothing was changed.'
@@ -172,13 +217,6 @@ function Invoke-Reset {
         $script:ResetExitCode = 1; return
     }
     Write-Ok "$(& git --version) works."
-    if (-not (Test-Path -LiteralPath $TrainingFolder)) {
-        New-Item -ItemType Directory -Path $TrainingFolder -Force -ErrorAction SilentlyContinue | Out-Null
-        if (-not (Test-Path -LiteralPath $TrainingFolder)) {
-            Write-ErrorMessage "Could not create $TrainingFolder. Pick another folder with -TrainingFolder, for example $env:USERPROFILE\training."
-            $script:ResetExitCode = 1; return
-        }
-    }
     Initialize-SystemProxy
     Install-DesktopShortcut
     Stop-TrainingProcesses
@@ -195,7 +233,7 @@ function Invoke-Reset {
         Write-ErrorMessage "Not ready: $($failedSessions -join ', '). Read the messages above."
         $script:ResetExitCode = 1
     } else {
-        Write-Ok "Every session is ready in $TrainingFolder."
+        Write-Ok "Every session is ready in $script:TrainingFolder."
     }
 }
 
